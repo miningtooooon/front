@@ -11,7 +11,7 @@ interface Props {
 }
 
 const ReferralView: React.FC<Props> = ({ referrals, totalEarned, rewardAmount, onInvite }) => {
-  const refLink = `https://t.me/GlowMineBot?start=ref12345`;
+  const refLink = `https://t.me/VcolletFree_bot?start=ref12345`;
 
   const copyToClipboard = () => {
     navigator.clipboard.writeText(refLink);
