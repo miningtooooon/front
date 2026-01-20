@@ -3,21 +3,24 @@ import { Package, Pickaxe, Zap, Timer, Play, Cpu, Activity } from 'lucide-react'
 
 interface Props {
   points: number;
-  // ✅ NOW: miningRate means GP PER HOUR (GP/HR)
+  // ✅ miningRate is GP PER HOUR (GP/HR)
   miningRate: number;
   session: {
     isActive: boolean;
     startTime: number | null;
-    duration: number;
+    duration: number; // seconds
   };
   onStartMining: () => void;
   onClaim: (reward: number) => void;
 }
 
-const MiningView: React.FC<Props> = ({ points, miningRate, session, onStartMining, onClaim }) => {
+const MiningView: React.FC<Props> = ({ points, miningRate, session, onStartMining }) => {
   const [timeLeft, setTimeLeft] = useState(0);
   const [particles, setParticles] = useState<{ id: number; left: number }[]>([]);
   const particleId = useRef(0);
+
+  // ✅ Ensure numeric even if backend/admin sends string
+  const ratePerHour = Number(miningRate) || 0;
 
   // Sync internal countdown with global session state
   useEffect(() => {
@@ -38,9 +41,6 @@ const MiningView: React.FC<Props> = ({ points, miningRate, session, onStartMinin
   }, [session.isActive, session.startTime, session.duration]);
 
   const handleStart = () => {
-    // Simulation of Adsgram
-    console.log('Loading Adsgram...');
-
     // Trigger the start logic in App.tsx
     onStartMining();
 
@@ -59,14 +59,8 @@ const MiningView: React.FC<Props> = ({ points, miningRate, session, onStartMinin
   const formatTime = (seconds: number) => {
     const h = Math.floor(seconds / 3600);
     const m = Math.floor((seconds % 3600) / 60);
-    const s = seconds % 60;
+    const s = Math.floor(seconds % 60);
     return `${h > 0 ? h + ':' : ''}${m < 10 && h > 0 ? '0' : ''}${m}:${s < 10 ? '0' : ''}${s}`;
-  };
-
-  // ✅ for small numbers like 0.4167 show 4 decimals, otherwise 2
-  const formatRate = (rate: number) => {
-    if (!isFinite(rate)) return '0.00';
-    return rate < 1 ? rate.toFixed(4) : rate.toFixed(2);
   };
 
   return (
@@ -129,7 +123,7 @@ const MiningView: React.FC<Props> = ({ points, miningRate, session, onStartMinin
 
           <div className="mt-6 text-center relative z-20">
             <p className="text-4xl font-black text-white font-mono tracking-tighter drop-shadow-md">
-              {points.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              {Number(points || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </p>
             <p className="text-[10px] text-purple-300 font-bold uppercase tracking-[0.2em] mt-2 opacity-80">
               {session.isActive ? 'Cloud Mining Active' : 'System Standby'}
@@ -175,8 +169,7 @@ const MiningView: React.FC<Props> = ({ points, miningRate, session, onStartMinin
             Hash Rate
           </p>
           <div className="flex items-baseline gap-1 mt-1">
-            <p className="text-lg font-bold font-mono">{formatRate(miningRate)}</p>
-            {/* ✅ FIX: show GP/HR not GP/Sec */}
+            <p className="text-lg font-bold font-mono">{ratePerHour.toFixed(2)}</p>
             <span className="text-[10px] opacity-40 uppercase">GP/HR</span>
           </div>
         </div>
@@ -191,14 +184,18 @@ const MiningView: React.FC<Props> = ({ points, miningRate, session, onStartMinin
             Session
           </p>
           <div className="flex items-center gap-2 mt-1 text-lg font-bold font-mono">
-            <p className={session.isActive ? 'text-white' : 'text-white/20'}>{session.isActive ? formatTime(timeLeft) : 'OFFLINE'}</p>
+            <p className={session.isActive ? 'text-white' : 'text-white/20'}>
+              {session.isActive ? formatTime(timeLeft) : 'OFFLINE'}
+            </p>
           </div>
         </div>
       </div>
 
       {/* High-Attention Action Button */}
       <div className="w-full relative group">
-        {!session.isActive && <div className="absolute -inset-1 bg-gradient-to-r from-purple-600 via-blue-500 to-purple-600 rounded-2xl blur opacity-40 animate-pulse"></div>}
+        {!session.isActive && (
+          <div className="absolute -inset-1 bg-gradient-to-r from-purple-600 via-blue-500 to-purple-600 rounded-2xl blur opacity-40 animate-pulse"></div>
+        )}
         <button
           onClick={handleStart}
           disabled={session.isActive}
@@ -210,7 +207,10 @@ const MiningView: React.FC<Props> = ({ points, miningRate, session, onStartMinin
         >
           {session.isActive ? (
             <>
-              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-purple-500/5 to-transparent animate-scan-slow" style={{ width: '200%', left: '-50%' }}></div>
+              <div
+                className="absolute inset-0 bg-gradient-to-r from-transparent via-purple-500/5 to-transparent animate-scan-slow"
+                style={{ width: '200%', left: '-50%' }}
+              ></div>
               <Activity className="animate-pulse text-purple-400" size={24} />
               Mining Live...
             </>
@@ -227,7 +227,9 @@ const MiningView: React.FC<Props> = ({ points, miningRate, session, onStartMinin
       {/* Information Panel */}
       <div className="glass p-4 rounded-2xl border-white/5 w-full bg-white/[0.02] border-l-2 border-l-purple-500/50">
         <p className="text-[11px] text-white/50 text-center leading-relaxed italic">
-          "Each high-performance mining session runs for <span className="text-purple-400 font-bold">{Math.round(session.duration / 3600)} hours</span>. Initialize the cloud gateway via ad verification to resume earning GP."
+          Each mining session runs for{' '}
+          <span className="text-purple-400 font-bold">{Math.round((session.duration || 0) / 60)} minutes</span>. Start a
+          session to earn GP.
         </p>
       </div>
     </div>
