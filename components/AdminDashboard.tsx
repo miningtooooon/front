@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { AppConfig, Task } from '../types';
 import { X, DollarSign, List, BarChart3, Plus, Trash2, Save, Clock, Zap, Shield } from 'lucide-react';
 
@@ -15,26 +15,42 @@ const AdminDashboard: React.FC<Props> = ({ config, tasks, onUpdateConfig, onUpda
   const [localConfig, setLocalConfig] = useState<AppConfig>(config);
   const [localTasks, setLocalTasks] = useState<Task[]>(tasks);
 
-  // ✅ NOW: miningRate = GP/HR مباشرة
-  const [gpHour, setGpHour] = useState(String(config.miningRate ?? 0));
+  // ✅ NEW: miningRate = GP/MIN
+  const [gpPerMin, setGpPerMin] = useState(String(config.miningRate ?? 0));
 
-  // لو config اتغير من App بعد تحميل من الباك (عشان مايبقاش فيه mismatch)
+  // ✅ NEW: miningDuration in backend/storage is still SECONDS
+  // but in UI we show MINUTES
+  const [sessionMinutes, setSessionMinutes] = useState(
+    String(Math.max(1, Math.round(Number(config.miningDuration ?? 60) / 60)))
+  );
+
+  // keep local state in sync if props change
   useEffect(() => {
     setLocalConfig(config);
-    setGpHour(String(config.miningRate ?? 0));
-  }, [config]);
+    setLocalTasks(tasks);
 
-  useEffect(() => {
-    setGpHour(Number(localConfig.miningRate ?? 0).toFixed(2));
-  }, [localConfig.miningRate]);
+    const rate = Number(config.miningRate ?? 0);
+    setGpPerMin(String(isFinite(rate) ? rate : 0));
 
-  const handleGpHourChange = (val: string) => {
-    setGpHour(val);
-    const hourly = parseFloat(val);
+    const mins = Math.max(1, Math.round(Number(config.miningDuration ?? 60) / 60));
+    setSessionMinutes(String(isFinite(mins) ? mins : 1));
+  }, [config, tasks]);
 
-    // ✅ حماية من NaN
-    if (!isNaN(hourly)) {
-      setLocalConfig({ ...localConfig, miningRate: hourly });
+  const handleGpPerMinChange = (val: string) => {
+    setGpPerMin(val);
+    const n = parseFloat(val);
+    if (!isNaN(n) && isFinite(n)) {
+      // ✅ store directly as GP/MIN
+      setLocalConfig((prev) => ({ ...prev, miningRate: n }));
+    }
+  };
+
+  const handleSessionMinutesChange = (val: string) => {
+    setSessionMinutes(val);
+    const mins = parseInt(val);
+    if (!isNaN(mins) && isFinite(mins)) {
+      // ✅ convert minutes -> seconds for storage
+      setLocalConfig((prev) => ({ ...prev, miningDuration: Math.max(1, mins) * 60 }));
     }
   };
 
@@ -98,17 +114,31 @@ const AdminDashboard: React.FC<Props> = ({ config, tasks, onUpdateConfig, onUpda
           {activeTab === 'finance' && (
             <div className="space-y-6 animate-in slide-in-from-right-4 duration-300">
               <div className="grid grid-cols-2 gap-4">
-                {/* ✅ المعدل بالساعة */}
-                <AdminInput label="Mining Speed (GP/Hr)" value={gpHour} onChange={handleGpHourChange} icon={<Zap size={14} className="text-yellow-400" />} />
-
+                {/* ✅ GP/MIN */}
                 <AdminInput
-                  label="Mining Time (Sec)"
-                  value={localConfig.miningDuration}
-                  onChange={(val: any) =>
-                    setLocalConfig({ ...localConfig, miningDuration: Number.isFinite(parseInt(val)) ? parseInt(val) : 0 })
-                  }
-                  icon={<Clock size={14} className="text-blue-400" />}
+                  label="Mining Speed (GP/Min)"
+                  value={gpPerMin}
+                  onChange={handleGpPerMinChange}
+                  icon={<Zap size={14} className="text-yellow-400" />}
+                  placeholder="مثال: 10"
                 />
+
+                {/* ✅ Minutes */}
+                <AdminInput
+                  label="Mining Time (Minutes)"
+                  value={sessionMinutes}
+                  onChange={handleSessionMinutesChange}
+                  icon={<Clock size={14} className="text-blue-400" />}
+                  placeholder="مثال: 1"
+                />
+              </div>
+
+              <div className="glass p-4 rounded-2xl border-white/10 bg-white/[0.02]">
+                <p className="text-[11px] text-white/60 leading-relaxed">
+                  ✅ الربح في الجلسة = <b>GP/Min</b> × <b>Minutes</b>
+                  <br />
+                  مثال: 10 GP/Min لمدة 1 دقيقة = 10 GP
+                </p>
               </div>
 
               <AdminInput label="Referral Bonus (GP)" value={localConfig.referralReward} onChange={(val: any) => setLocalConfig({ ...localConfig, referralReward: parseInt(val) || 0 })} />
