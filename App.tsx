@@ -20,8 +20,11 @@ const BOT_USERNAME =
   'VcolletFree_bot';
 
 const DEFAULT_CONFIG: AppConfig = {
-  miningRate: 10,       // GP/HR ✅
-  miningDuration: 3600, // seconds ✅
+  // ✅ NEW SYSTEM:
+  // miningRate = GP PER MINUTE (GP/MIN)
+  // miningDuration = MINUTES
+  miningRate: 10,        // 10 GP / Minute
+  miningDuration: 60,    // 60 Minutes
   referralReward: 500,
   minWithdraw: 10000,
   exchangeRate: 1000,
@@ -80,12 +83,18 @@ async function api(path: string, init?: RequestInit) {
 const App: React.FC = () => {
   const [activeView, setActiveView] = useState<View>(View.MINING);
 
-  // ✅ SAFE load config (prevents undefined / old localStorage crash)
+  // ✅ SAFE load config
   const [config, setConfig] = useState<AppConfig>(() => {
     try {
       const saved = localStorage.getItem('glowmine_config');
       const parsed = saved ? JSON.parse(saved) : {};
-      return { ...DEFAULT_CONFIG, ...(parsed || {}) };
+      const merged = { ...DEFAULT_CONFIG, ...(parsed || {}) };
+
+      // ✅ Optional: tiny safety normalize
+      merged.miningRate = Number(merged.miningRate) || DEFAULT_CONFIG.miningRate;
+      merged.miningDuration = Number(merged.miningDuration) || DEFAULT_CONFIG.miningDuration;
+
+      return merged;
     } catch {
       return DEFAULT_CONFIG;
     }
@@ -115,7 +124,14 @@ const App: React.FC = () => {
     (async () => {
       try {
         const res = await api('/api/config');
-        if (res?.ok && res?.config) setConfig((prev) => ({ ...prev, ...res.config }));
+        if (res?.ok && res?.config) {
+          setConfig((prev) => {
+            const next = { ...prev, ...res.config };
+            next.miningRate = Number(next.miningRate) || DEFAULT_CONFIG.miningRate;
+            next.miningDuration = Number(next.miningDuration) || DEFAULT_CONFIG.miningDuration;
+            return next;
+          });
+        }
       } catch {}
     })();
   }, []);
@@ -144,7 +160,14 @@ const App: React.FC = () => {
           referrals: Array.isArray(me?.referrals) ? me.referrals : [],
         }));
 
-        if (me?.config) setConfig((prev) => ({ ...prev, ...me.config }));
+        if (me?.config) {
+          setConfig((prev) => {
+            const next = { ...prev, ...me.config };
+            next.miningRate = Number(next.miningRate) || DEFAULT_CONFIG.miningRate;
+            next.miningDuration = Number(next.miningDuration) || DEFAULT_CONFIG.miningDuration;
+            return next;
+          });
+        }
       } catch {
         setUser((prev) => ({ ...prev, username }));
       }
@@ -178,22 +201,32 @@ const App: React.FC = () => {
   };
 
   const updateConfig = async (next: AppConfig) => {
-    setConfig(next);
+    // ✅ ensure numbers
+    const safeNext = {
+      ...next,
+      miningRate: Number(next.miningRate) || DEFAULT_CONFIG.miningRate,
+      miningDuration: Number(next.miningDuration) || DEFAULT_CONFIG.miningDuration,
+    };
+
+    setConfig(safeNext);
     if (!BACKEND_URL) return;
     try {
-      await api('/api/admin/config', { method: 'POST', body: JSON.stringify(next) });
+      await api('/api/admin/config', { method: 'POST', body: JSON.stringify(safeNext) });
     } catch {}
   };
 
-  // mining engine: sync once at end
+  // ✅ Mining Engine (NEW):
+  // miningRate = GP/MIN
+  // miningDuration = MINUTES
+  // total = rate * duration
   useEffect(() => {
     if (!user.miningSession.isActive || !user.miningSession.startTime) return;
 
     const interval = setInterval(() => {
-      const elapsedSeconds = (Date.now() - user.miningSession.startTime!) / 1000;
+      const elapsedMinutes = (Date.now() - user.miningSession.startTime!) / 60000;
 
-      if (elapsedSeconds >= config.miningDuration) {
-        const totalSessionPoints = (config.miningDuration / 3600) * config.miningRate;
+      if (elapsedMinutes >= config.miningDuration) {
+        const totalSessionPoints = config.miningRate * config.miningDuration;
 
         setUser((prev) => ({
           ...prev,
@@ -257,6 +290,9 @@ const App: React.FC = () => {
 
   const usdtValue = (user.points / config.exchangeRate).toFixed(2);
 
+  // ✅ MiningView countdown expects seconds => convert minutes to seconds here
+  const miningDurationSeconds = Math.max(0, Math.floor(config.miningDuration * 60));
+
   return (
     <div className="min-h-screen pb-24 relative overflow-hidden bg-[#030014]">
       <div className="fixed top-0 left-0 w-full h-full pointer-events-none opacity-20 z-0">
@@ -265,7 +301,10 @@ const App: React.FC = () => {
       </div>
 
       <header className="p-4 pt-6 flex justify-between items-center z-20 sticky top-0 bg-[#030014]/80 backdrop-blur-md border-b border-white/5">
-        <div onClick={handleAdminTrigger} className="flex items-center gap-2 glass px-4 py-2 rounded-2xl border-purple-500/30 cursor-pointer active:scale-95 transition-transform select-none">
+        <div
+          onClick={handleAdminTrigger}
+          className="flex items-center gap-2 glass px-4 py-2 rounded-2xl border-purple-500/30 cursor-pointer active:scale-95 transition-transform select-none"
+        >
           <div className="bg-purple-500/20 p-1.5 rounded-lg">
             <Coins className="w-5 h-5 text-purple-400" />
           </div>
@@ -275,7 +314,10 @@ const App: React.FC = () => {
           </div>
         </div>
 
-        <button onClick={() => setIsWithdrawOpen(true)} className="flex items-center gap-2 glass px-4 py-2 rounded-2xl border-blue-500/30 hover:bg-white/10 transition-colors">
+        <button
+          onClick={() => setIsWithdrawOpen(true)}
+          className="flex items-center gap-2 glass px-4 py-2 rounded-2xl border-blue-500/30 hover:bg-white/10 transition-colors"
+        >
           <div className="bg-blue-500/20 p-1.5 rounded-lg">
             <Wallet className="w-5 h-5 text-blue-400" />
           </div>
@@ -290,8 +332,8 @@ const App: React.FC = () => {
         {activeView === View.MINING && (
           <MiningView
             points={user.points}
-            miningRate={config.miningRate}
-            session={{ ...user.miningSession, duration: config.miningDuration }}
+            miningRate={config.miningRate} // ✅ now GP/MIN (you will just relabel in MiningView later)
+            session={{ ...user.miningSession, duration: miningDurationSeconds }} // ✅ seconds for countdown
             onStartMining={handleStartMining}
             onClaim={(reward) => handleUpdatePoints(reward)}
           />
@@ -330,10 +372,19 @@ const App: React.FC = () => {
               className="w-full bg-white/5 border border-white/10 rounded-2xl px-4 py-4 text-center font-mono text-xl tracking-[1em] text-white focus:outline-none focus:border-purple-500/50 transition-colors"
             />
             <div className="flex gap-2 w-full">
-              <button onClick={() => { setIsPinModalOpen(false); setPinInput(''); }} className="flex-1 py-4 bg-white/5 hover:bg-white/10 rounded-2xl font-bold text-xs uppercase transition-colors text-white">
+              <button
+                onClick={() => {
+                  setIsPinModalOpen(false);
+                  setPinInput('');
+                }}
+                className="flex-1 py-4 bg-white/5 hover:bg-white/10 rounded-2xl font-bold text-xs uppercase transition-colors text-white"
+              >
                 Cancel
               </button>
-              <button onClick={handlePinSubmit} className="flex-[2] py-4 bg-purple-600 hover:bg-purple-500 rounded-2xl font-black text-xs uppercase tracking-widest transition-all text-white">
+              <button
+                onClick={handlePinSubmit}
+                className="flex-[2] py-4 bg-purple-600 hover:bg-purple-500 rounded-2xl font-black text-xs uppercase tracking-widest transition-all text-white"
+              >
                 Verify
               </button>
             </div>
