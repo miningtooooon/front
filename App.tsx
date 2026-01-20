@@ -1,443 +1,276 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { View, UserState, Task, AppConfig } from './types';
-import MiningView from './components/MiningView';
-import TasksView from './components/TasksView';
-import ReferralView from './components/ReferralView';
-import Navbar from './components/Navbar';
-import WithdrawModal from './components/WithdrawModal';
-import AdminDashboard from './components/AdminDashboard';
-import { Coins, Wallet, Lock } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { AppConfig, Task } from '../types';
+import {
+  X,
+  DollarSign,
+  List,
+  BarChart3,
+  Plus,
+  Trash2,
+  Save,
+  Clock,
+  Zap,
+  Shield,
+} from 'lucide-react';
 
-/**
- * Backend URL (Render service)
- * Priority: window injection > Vite env > empty
- */
-const BACKEND_URL = (
-  (window as any)._ENV_?.BACKEND_URL ||
-  (import.meta as any).env?.VITE_BACKEND_URL ||
-  ''
-).replace(/\/$/, '');
-
-// Bot username for referral link (Vite env recommended)
-const BOT_USERNAME =
-  (import.meta as any).env?.VITE_BOT_USERNAME ||
-  (window as any)._ENV_?.BOT_USERNAME ||
-  'VcolletFree_bot';
-
-const DEFAULT_CONFIG: AppConfig = {
-  miningRate: 0.05,
-  miningDuration: 3600,
-  referralReward: 500,
-  minWithdraw: 10000,
-  exchangeRate: 1000,
-  totalMembers: 14502,
-  activeNow: 842,
-  // kept for UI compatibility only
-  telegramBotToken: '',
-  adminChatId: '',
-};
-
-const DEFAULT_TASKS: Task[] = [
-  { id: 'v1', title: 'Watch Crypto News Ad', reward: 500, type: 'video', isCompleted: false, timer: 20, link: 'AD_CODE_123' },
-  { id: 't1', title: 'Join GlowMine Official', reward: 1000, type: 'telegram', isCompleted: false, link: 'https://t.me/GlowMine' },
-  { id: 'l1', title: 'Visit Partner Site', reward: 300, type: 'link', isCompleted: false, timer: 20, link: 'https://google.com' },
-];
-
-const INITIAL_STATE: UserState = {
-  username: 'Loading...',
-  points: 0,
-  referrals: [],
-  tasks: DEFAULT_TASKS,
-  miningSession: { isActive: false, startTime: null },
-};
-
-function getTelegramUser() {
-  const tg = (window as any)?.Telegram?.WebApp;
-  const tgUser = tg?.initDataUnsafe?.user;
-  const tgId = tgUser?.id;
-  const username =
-    tgUser?.username ||
-    `${tgUser?.first_name || 'User'}${tgUser?.last_name ? ` ${tgUser?.last_name}` : ''}`;
-  return { tgId, username, tg };
+interface Props {
+  config: AppConfig;
+  tasks: Task[];
+  onUpdateConfig: (config: AppConfig) => void;
+  onUpdateTasks: (tasks: Task[]) => void;
+  onClose: () => void;
 }
 
-async function api(path: string, init?: RequestInit) {
-  if (!BACKEND_URL) throw new Error('Missing BACKEND_URL');
-  const res = await fetch(`${BACKEND_URL}${path}`, {
-    ...init,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(init?.headers || {}),
-    },
-  });
+const AdminDashboard: React.FC<Props> = ({ config, tasks, onUpdateConfig, onUpdateTasks, onClose }) => {
+  const [activeTab, setActiveTab] = useState<'finance' | 'tasks' | 'stats' | 'security'>('finance');
+  const [localConfig, setLocalConfig] = useState<AppConfig>(config);
+  const [localTasks, setLocalTasks] = useState<Task[]>(tasks);
 
-  // Try parse body for better errors
-  const text = await res.text().catch(() => '');
-  let data: any = {};
-  try {
-    data = text ? JSON.parse(text) : {};
-  } catch {
-    data = {};
-  }
+  // ✅ NOW: gpHour is exactly miningRate (GP/HR) — no conversion
+  const [gpHour, setGpHour] = useState(String(config.miningRate));
 
-  if (!res.ok) {
-    throw new Error(text || `HTTP ${res.status}`);
-  }
-
-  return data;
-}
-
-const App: React.FC = () => {
-  const [activeView, setActiveView] = useState<View>(View.MINING);
-
-  // Global Config
-  const [config, setConfig] = useState<AppConfig>(() => {
-    const saved = localStorage.getItem('glowmine_config');
-    const parsed = saved ? JSON.parse(saved) : DEFAULT_CONFIG;
-    return { ...DEFAULT_CONFIG, ...parsed };
-  });
-
-  // User State
-  const [user, setUser] = useState<UserState>(() => {
-    const saved = localStorage.getItem('glowmine_user');
-    return saved ? JSON.parse(saved) : INITIAL_STATE;
-  });
-
-  const [isWithdrawOpen, setIsWithdrawOpen] = useState(false);
-  const [isAdminOpen, setIsAdminOpen] = useState(false);
-  const [isPinModalOpen, setIsPinModalOpen] = useState(false);
-  const [pinInput, setPinInput] = useState('');
-
-  const clickCountRef = useRef(0);
-  const clickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  // ===== Load config from backend (source of truth) =====
+  // ✅ keep local state in sync if props change (ex: config loaded from backend)
   useEffect(() => {
-    if (!BACKEND_URL) return;
-    (async () => {
-      try {
-        const res = await api('/api/config');
-        if (res?.ok && res?.config) {
-          setConfig((prev) => ({ ...prev, ...res.config }));
-        }
-      } catch (e) {
-        console.error('Config load failed:', (e as any)?.message || e);
-      }
-    })();
-  }, []);
-
-  // ===== Load user from backend (source of truth) =====
-  useEffect(() => {
-    const { tgId, username, tg } = getTelegramUser();
-
-    // Must be opened from Telegram for real tgId
-    if (!tgId) {
-      setUser((prev) => ({
-        ...prev,
-        username: 'Open from Telegram',
-      }));
-      return;
-    }
-
-    tg?.ready?.();
-
-    (async () => {
-      try {
-        // register/upsert
-        await api('/api/register', {
-          method: 'POST',
-          body: JSON.stringify({ tgId, username }),
-        });
-
-        // get me
-        const meRes = await api(`/api/me?tgId=${encodeURIComponent(String(tgId))}`);
-        const me = meRes?.me;
-
-        setUser((prev) => ({
-          ...prev,
-          username,
-          points: Number(me?.points || 0),
-          referrals: Array.isArray(me?.referrals) ? me.referrals : [],
-        }));
-
-        if (me?.config) {
-          setConfig((prev) => ({ ...prev, ...me.config }));
-        }
-      } catch (e) {
-        console.error('User load failed:', (e as any)?.message || e);
-        setUser((prev) => ({ ...prev, username }));
-      }
-    })();
-  }, []);
-
-  // ===== Persist to localStorage (for UI only) =====
-  useEffect(() => {
-    localStorage.setItem('glowmine_user', JSON.stringify(user));
-  }, [user]);
-
-  useEffect(() => {
-    localStorage.setItem('glowmine_config', JSON.stringify(config));
+    setLocalConfig(config);
+    setGpHour(String(config.miningRate));
   }, [config]);
 
-  // ===== Admin access via 8 taps on balance =====
-  const handleAdminTrigger = () => {
-    if (clickTimerRef.current) clearTimeout(clickTimerRef.current);
-    clickCountRef.current += 1;
-
-    if (clickCountRef.current >= 8) {
-      setIsPinModalOpen(true);
-      clickCountRef.current = 0;
-    } else {
-      clickTimerRef.current = setTimeout(() => {
-        clickCountRef.current = 0;
-      }, 2000);
-    }
-  };
-
-  const handlePinSubmit = () => {
-    if (pinInput === '2025') {
-      setIsAdminOpen(true);
-      setIsPinModalOpen(false);
-      setPinInput('');
-    } else {
-      alert('Invalid Access Key');
-      setPinInput('');
-    }
-  };
-
-  // ===== Save config to backend (REAL) =====
-  const updateConfig = async (next: AppConfig) => {
-    setConfig(next);
-    if (!BACKEND_URL) return;
-    try {
-      await api('/api/admin/config', {
-        method: 'POST',
-        body: JSON.stringify(next),
-      });
-    } catch (e) {
-      console.error('Config save failed:', (e as any)?.message || e);
-    }
-  };
-
-  // ===== Mining Engine (adds points + sync once at end) =====
   useEffect(() => {
-    if (!user.miningSession.isActive || !user.miningSession.startTime) return;
+    setLocalTasks(tasks);
+  }, [tasks]);
 
-    const interval = setInterval(() => {
-      const now = Date.now();
-      const elapsed = (now - user.miningSession.startTime!) / 1000;
+  // ✅ whenever localConfig.miningRate changes, reflect it in input
+  useEffect(() => {
+    const r = Number(localConfig.miningRate);
+    if (isFinite(r)) {
+      // show more decimals for small rates like 0.4167
+      setGpHour(r < 1 ? r.toFixed(4) : r.toFixed(2));
+    }
+  }, [localConfig.miningRate]);
 
-      if (elapsed >= config.miningDuration) {
-        const totalSessionPoints = config.miningDuration * config.miningRate;
-
-        // local update
-        setUser((prev) => ({
-          ...prev,
-          points: prev.points + totalSessionPoints,
-          miningSession: { ...prev.miningSession, isActive: false, startTime: null },
-        }));
-
-        // backend sync
-        const { tgId } = getTelegramUser();
-        if (tgId && BACKEND_URL) {
-          api('/api/earn', {
-            method: 'POST',
-            body: JSON.stringify({ tgId, amount: totalSessionPoints, reason: 'mining' }),
-          })
-            .then(() => api(`/api/me?tgId=${encodeURIComponent(String(tgId))}`))
-            .then((meRes) => {
-              const me = meRes?.me;
-              setUser((prev) => ({
-                ...prev,
-                points: Number(me?.points ?? prev.points),
-                referrals: Array.isArray(me?.referrals) ? me.referrals : prev.referrals,
-              }));
-            })
-            .catch(() => {});
-        }
-
-        clearInterval(interval);
-      }
-    }, 1000);
-
-    return () => clearInterval(interval);
-  }, [user.miningSession.isActive, user.miningSession.startTime, config.miningRate, config.miningDuration]);
-
-  const handleStartMining = () => {
-    setUser((prev) => ({
-      ...prev,
-      miningSession: { ...prev.miningSession, isActive: true, startTime: Date.now() },
-    }));
-  };
-
-  const handleUpdatePoints = (amount: number) => {
-    setUser((prev) => ({ ...prev, points: prev.points + amount }));
-  };
-
-  const handleCompleteTask = (taskId: string) => {
-    const task = user.tasks.find((t) => t.id === taskId);
-    if (!task) return;
-
-    // local update
-    setUser((prev) => ({
-      ...prev,
-      tasks: prev.tasks.map((t) => (t.id === taskId ? { ...t, isCompleted: true } : t)),
-      points: prev.points + task.reward,
-    }));
-
-    // backend sync
-    const { tgId } = getTelegramUser();
-    if (tgId && BACKEND_URL) {
-      api('/api/earn', {
-        method: 'POST',
-        body: JSON.stringify({ tgId, amount: task.reward, reason: `task:${taskId}` }),
-      }).catch(() => {});
+  const handleGpHourChange = (val: string) => {
+    setGpHour(val);
+    const hourly = parseFloat(val);
+    if (!isNaN(hourly)) {
+      // ✅ store directly as GP/HR
+      setLocalConfig({ ...localConfig, miningRate: hourly });
     }
   };
 
-  const handleAddReferral = () => {
-    const { tgId } = getTelegramUser();
-    const myId = tgId || '0';
+  const saveConfig = () => {
+    onUpdateConfig(localConfig);
+    alert('System settings updated successfully!');
+  };
 
-    // ✅ Real referral link: start=ref<telegramId>
-    const refLink = `https://t.me/${BOT_USERNAME}?start=ref${myId}`;
-    const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(refLink)}&text=${encodeURIComponent(
-      'Join VcolletFree and start earning!'
-    )}`;
+  const saveTasks = () => {
+    onUpdateTasks(localTasks);
+    alert('Task database updated!');
+  };
 
-    if ((window as any).Telegram?.WebApp) {
-      (window as any).Telegram.WebApp.openTelegramLink(shareUrl);
-    } else {
-      window.open(shareUrl, '_blank');
+  const addNewTask = () => {
+    const newTask: Task = {
+      id: 'task_' + Date.now(),
+      title: 'New Community Task',
+      reward: 1000,
+      type: 'link',
+      isCompleted: false,
+      timer: 30,
+      link: '',
+    };
+    setLocalTasks([...localTasks, newTask]);
+  };
+
+  const deleteTask = (id: string) => {
+    if (confirm('Delete this task?')) {
+      setLocalTasks(localTasks.filter((t) => t.id !== id));
     }
   };
 
-  const usdtValue = (user.points / config.exchangeRate).toFixed(2);
+  const updateTaskField = (id: string, field: keyof Task, value: any) => {
+    setLocalTasks(localTasks.map((t) => (t.id === id ? { ...t, [field]: value } : t)));
+  };
 
   return (
-    <div className="min-h-screen pb-24 relative overflow-hidden bg-[#030014]">
-      {/* Background Decor */}
-      <div className="fixed top-0 left-0 w-full h-full pointer-events-none opacity-20 z-0">
-        <div className="absolute top-1/4 left-1/4 w-64 h-64 bg-purple-600 rounded-full blur-[100px] animate-pulse"></div>
-        <div className="absolute bottom-1/4 right-1/4 w-64 h-64 bg-blue-600 rounded-full blur-[100px] animate-pulse"></div>
-      </div>
-
-      <header className="p-4 pt-6 flex justify-between items-center z-20 sticky top-0 bg-[#030014]/80 backdrop-blur-md border-b border-white/5">
-        <div
-          onClick={handleAdminTrigger}
-          className="flex items-center gap-2 glass px-4 py-2 rounded-2xl border-purple-500/30 cursor-pointer active:scale-95 transition-transform select-none"
-        >
-          <div className="bg-purple-500/20 p-1.5 rounded-lg">
-            <Coins className="w-5 h-5 text-purple-400" />
-          </div>
+    <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/95 backdrop-blur-2xl animate-in fade-in zoom-in duration-300">
+      <div className="w-full max-w-lg h-[85vh] glass border-white/20 rounded-[40px] flex flex-col overflow-hidden shadow-2xl shadow-purple-500/20">
+        <div className="p-6 border-b border-white/10 flex justify-between items-center bg-gradient-to-r from-purple-900/20 to-transparent">
           <div>
-            <p className="text-[10px] uppercase font-bold text-purple-400 tracking-wider">Balance</p>
-            <p className="text-sm font-bold font-mono">{user.points.toFixed(2)} GP</p>
+            <div className="flex items-center gap-2">
+              <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+              <h2 className="text-xl font-black uppercase tracking-tighter text-white">Main Controller</h2>
+            </div>
+            <p className="text-[10px] text-purple-400 uppercase font-black tracking-widest mt-0.5">Control Center v3.0</p>
           </div>
+          <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-full transition-colors">
+            <X size={20} className="text-white/60" />
+          </button>
         </div>
 
-        <button
-          onClick={() => setIsWithdrawOpen(true)}
-          className="flex items-center gap-2 glass px-4 py-2 rounded-2xl border-blue-500/30 hover:bg-white/10 transition-colors"
-        >
-          <div className="bg-blue-500/20 p-1.5 rounded-lg">
-            <Wallet className="w-5 h-5 text-blue-400" />
-          </div>
-          <div className="text-left">
-            <p className="text-[10px] uppercase font-bold text-blue-400 tracking-wider">Value</p>
-            <p className="text-sm font-bold font-mono">${usdtValue} USDT</p>
-          </div>
-        </button>
-      </header>
-
-      <main className="px-4 mt-4 animate-in fade-in duration-500 relative z-10">
-        {activeView === View.MINING && (
-          <MiningView
-            points={user.points}
-            miningRate={config.miningRate}
-            session={{ ...user.miningSession, duration: config.miningDuration }}
-            onStartMining={handleStartMining}
-            onClaim={(reward) => handleUpdatePoints(reward)}
-          />
-        )}
-
-        {activeView === View.TASKS && <TasksView tasks={user.tasks} onComplete={handleCompleteTask} />}
-
-        {activeView === View.REFERRALS && (
-          <ReferralView
-            referrals={user.referrals}
-            totalEarned={user.referrals.reduce((acc, curr) => acc + curr.earned, 0)}
-            rewardAmount={config.referralReward}
-            onInvite={handleAddReferral}
-          />
-        )}
-      </main>
-
-      <Navbar activeView={activeView} onViewChange={setActiveView} />
-
-      {/* Admin Verification Modal */}
-      {isPinModalOpen && (
-        <div className="fixed inset-0 z-[300] flex items-center justify-center p-6 bg-black/90 backdrop-blur-xl animate-in zoom-in duration-300">
-          <div className="w-full max-w-xs glass border-purple-500/30 rounded-[32px] p-8 flex flex-col items-center gap-6 shadow-2xl shadow-purple-500/20">
-            <div className="p-4 bg-purple-500/10 rounded-full text-purple-400">
-              <Lock size={32} />
-            </div>
-            <div className="text-center space-y-1">
-              <h3 className="text-lg font-black uppercase tracking-tighter text-white">Admin Access</h3>
-              <p className="text-[10px] text-white/40 uppercase font-bold tracking-widest">Enter Security Key</p>
-            </div>
-            <input
-              type="password"
-              value={pinInput}
-              onChange={(e) => setPinInput(e.target.value)}
-              placeholder="****"
-              autoFocus
-              className="w-full bg-white/5 border border-white/10 rounded-2xl px-4 py-4 text-center font-mono text-xl tracking-[1em] text-white focus:outline-none focus:border-purple-500/50 transition-colors"
-            />
-            <div className="flex gap-2 w-full">
-              <button
-                onClick={() => {
-                  setIsPinModalOpen(false);
-                  setPinInput('');
-                }}
-                className="flex-1 py-4 bg-white/5 hover:bg-white/10 rounded-2xl font-bold text-xs uppercase transition-colors text-white"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handlePinSubmit}
-                className="flex-[2] py-4 bg-purple-600 hover:bg-purple-500 rounded-2xl font-black text-xs uppercase tracking-widest transition-all text-white"
-              >
-                Verify
-              </button>
-            </div>
-          </div>
+        <div className="flex border-b border-white/10 bg-white/5 overflow-x-auto no-scrollbar">
+          <TabButton active={activeTab === 'finance'} onClick={() => setActiveTab('finance')} icon={<DollarSign size={16} />} label="Economy" />
+          <TabButton active={activeTab === 'tasks'} onClick={() => setActiveTab('tasks')} icon={<List size={16} />} label="Bounties" />
+          <TabButton active={activeTab === 'security'} onClick={() => setActiveTab('security')} icon={<Shield size={16} />} label="Security" />
+          <TabButton active={activeTab === 'stats'} onClick={() => setActiveTab('stats')} icon={<BarChart3 size={16} />} label="Telemetry" />
         </div>
-      )}
 
-      {/* Modals */}
-      {isWithdrawOpen && (
-        <WithdrawModal
-          username={user.username}
-          balance={user.points}
-          minWithdraw={config.minWithdraw}
-          exchangeRate={config.exchangeRate}
-          config={config}
-          onClose={() => setIsWithdrawOpen(false)}
-        />
-      )}
+        <div className="flex-1 overflow-y-auto p-6 space-y-8 custom-scrollbar">
+          {activeTab === 'finance' && (
+            <div className="space-y-6 animate-in slide-in-from-right-4 duration-300">
+              <div className="grid grid-cols-2 gap-4">
+                {/* ✅ GP/HR directly */}
+                <AdminInput
+                  label="Mining Speed (GP/Hr)"
+                  value={gpHour}
+                  onChange={handleGpHourChange}
+                  icon={<Zap size={14} className="text-yellow-400" />}
+                />
 
-      {isAdminOpen && (
-        <AdminDashboard
-          config={config}
-          tasks={user.tasks}
-          onUpdateConfig={updateConfig}
-          onUpdateTasks={(newTasks) => setUser((prev) => ({ ...prev, tasks: newTasks }))}
-          onClose={() => setIsAdminOpen(false)}
-        />
-      )}
+                {/* duration is seconds */}
+                <AdminInput
+                  label="Mining Time (Sec)"
+                  value={localConfig.miningDuration}
+                  onChange={(val: any) => setLocalConfig({ ...localConfig, miningDuration: parseInt(val) || 0 })}
+                  icon={<Clock size={14} className="text-blue-400" />}
+                />
+              </div>
+
+              <AdminInput label="Referral Bonus (GP)" value={localConfig.referralReward} onChange={(val: any) => setLocalConfig({ ...localConfig, referralReward: parseInt(val) || 0 })} />
+              <AdminInput label="Min Payout (GP)" value={localConfig.minWithdraw} onChange={(val: any) => setLocalConfig({ ...localConfig, minWithdraw: parseInt(val) || 0 })} />
+              <AdminInput label="Exchange Rate (GP/$)" value={localConfig.exchangeRate} onChange={(val: any) => setLocalConfig({ ...localConfig, exchangeRate: parseInt(val) || 0 })} />
+
+              <button
+                onClick={saveConfig}
+                className="w-full py-5 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-2xl font-black uppercase tracking-widest flex items-center justify-center gap-3 active:scale-95 transition-all"
+              >
+                <Save size={20} /> Deploy Finance Update
+              </button>
+            </div>
+          )}
+
+          {activeTab === 'tasks' && (
+            <div className="space-y-4 animate-in slide-in-from-right-4 duration-300">
+              <div className="flex justify-between items-center mb-2 px-1">
+                <p className="text-[10px] font-black uppercase text-white/40 tracking-widest">Active Task Modules ({localTasks.length})</p>
+                <button onClick={addNewTask} className="flex items-center gap-1.5 text-xs font-bold text-purple-400 hover:text-purple-300">
+                  <Plus size={14} /> New Task
+                </button>
+              </div>
+
+              {localTasks.map((task) => (
+                <div key={task.id} className="glass p-5 rounded-3xl border-white/10 space-y-4">
+                  <div className="flex justify-between items-start">
+                    <input
+                      value={task.title}
+                      onChange={(e) => updateTaskField(task.id, 'title', e.target.value)}
+                      className="bg-transparent font-bold text-sm w-full outline-none text-white focus:text-purple-400"
+                    />
+                    <button onClick={() => deleteTask(task.id)} className="text-red-500/40 hover:text-red-500 p-2">
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
+
+                  <input
+                    value={task.link || ''}
+                    onChange={(e) => updateTaskField(task.id, 'link', e.target.value)}
+                    className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-xs font-mono text-blue-300 outline-none"
+                    placeholder="Task URL or Ad Code"
+                  />
+
+                  <div className="grid grid-cols-3 gap-3">
+                    <AdminInput label="Reward" value={task.reward} onChange={(val: any) => updateTaskField(task.id, 'reward', parseInt(val) || 0)} />
+                    <AdminInput label="Timer" value={task.timer || 0} onChange={(val: any) => updateTaskField(task.id, 'timer', parseInt(val) || 0)} />
+
+                    <div className="space-y-1">
+                      <label className="text-[8px] text-white/30 uppercase font-black ml-1">Type</label>
+                      <select
+                        value={task.type}
+                        onChange={(e) => updateTaskField(task.id, 'type', e.target.value)}
+                        className="w-full bg-[#1a162e] border border-white/10 rounded-xl p-2.5 text-[10px] text-white uppercase font-bold outline-none"
+                      >
+                        <option value="video">AD Video</option>
+                        <option value="link">Website</option>
+                        <option value="telegram">Telegram</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              ))}
+
+              <button
+                onClick={saveTasks}
+                className="w-full py-5 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-2xl font-black uppercase tracking-widest flex items-center justify-center gap-3 active:scale-95 transition-all"
+              >
+                <Save size={20} /> Synchronize All Tasks
+              </button>
+            </div>
+          )}
+
+          {activeTab === 'security' && (
+            <div className="space-y-6 animate-in slide-in-from-right-4 duration-300">
+              <div className="p-4 bg-purple-500/10 rounded-2xl border border-purple-500/20 mb-4">
+                <p className="text-[11px] text-purple-300 leading-relaxed font-medium">
+                  Configuring these fields allows you to receive instant Telegram notifications for every withdrawal request.
+                </p>
+              </div>
+              <AdminInput label="Telegram Bot Token" value={localConfig.telegramBotToken || ''} onChange={(val: string) => setLocalConfig({ ...localConfig, telegramBotToken: val })} placeholder="58212...:AAH..." />
+              <AdminInput label="Admin Chat ID" value={localConfig.adminChatId || ''} onChange={(val: string) => setLocalConfig({ ...localConfig, adminChatId: val })} placeholder="12345678" />
+              <button
+                onClick={saveConfig}
+                className="w-full py-5 bg-gradient-to-r from-red-600 to-purple-600 text-white rounded-2xl font-black uppercase tracking-widest flex items-center justify-center gap-3 active:scale-95 transition-all shadow-lg shadow-red-500/20"
+              >
+                <Shield size={20} /> Save API Credentials
+              </button>
+            </div>
+          )}
+
+          {activeTab === 'stats' && (
+            <div className="space-y-6 animate-in slide-in-from-right-4 duration-300">
+              <AdminInput label="Total Members" value={localConfig.totalMembers} onChange={(val: any) => setLocalConfig({ ...localConfig, totalMembers: parseInt(val) || 0 })} />
+              <AdminInput label="Active Now" value={localConfig.activeNow} onChange={(val: any) => setLocalConfig({ ...localConfig, activeNow: parseInt(val) || 0 })} />
+              <div className="p-8 glass rounded-[32px] border-white/10 bg-gradient-to-br from-purple-500/5 to-transparent h-32 flex items-end gap-1.5 px-2">
+                {[45, 80, 50, 95, 70, 85, 60, 100, 35, 65, 85, 45].map((h, i) => (
+                  <div
+                    key={i}
+                    className="flex-1 bg-gradient-to-t from-purple-600 to-blue-400 rounded-t-lg animate-pulse"
+                    style={{ height: `${h}%`, animationDelay: `${i * 0.1}s`, opacity: 0.5 }}
+                  ></div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 };
 
-export default App;
+const TabButton = ({ active, onClick, icon, label }: any) => (
+  <button
+    onClick={onClick}
+    className={`flex-shrink-0 px-6 py-5 flex flex-col items-center gap-1.5 transition-all relative ${
+      active ? 'text-white' : 'text-white/30 hover:text-white/50'
+    }`}
+  >
+    {icon}
+    <span className="text-[8px] font-black uppercase tracking-widest">{label}</span>
+    {active && <div className="absolute bottom-0 left-0 right-0 h-1 bg-gradient-to-r from-purple-500 to-blue-500 animate-in slide-in-from-bottom-1"></div>}
+  </button>
+);
+
+const AdminInput = ({ label, value, onChange, icon, placeholder }: any) => (
+  <div className="space-y-1.5">
+    <div className="flex items-center gap-1.5 ml-1">
+      {icon}
+      <label className="text-[9px] text-white/40 uppercase font-black tracking-widest">{label}</label>
+    </div>
+    <input
+      type="text"
+      placeholder={placeholder}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className="w-full bg-white/5 border border-white/10 rounded-2xl px-5 py-4 font-mono text-xs text-white focus:border-purple-500/60 outline-none transition-all"
+    />
+  </div>
+);
+
+export default AdminDashboard;
