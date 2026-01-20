@@ -3,12 +3,12 @@ import { Package, Pickaxe, Zap, Timer, Play, Cpu, Activity } from 'lucide-react'
 
 interface Props {
   points: number;
-  // ✅ miningRate is GP PER HOUR (GP/HR)
+  // ✅ miningRate is GP PER MINUTE (GP/MIN)
   miningRate: number;
   session: {
     isActive: boolean;
     startTime: number | null;
-    duration: number; // seconds
+    duration: number; // seconds (for countdown)
   };
   onStartMining: () => void;
   onClaim: (reward: number) => void;
@@ -20,7 +20,7 @@ const MiningView: React.FC<Props> = ({ points, miningRate, session, onStartMinin
   const particleId = useRef(0);
 
   // ✅ Ensure numeric even if backend/admin sends string
-  const ratePerHour = Number(miningRate) || 0;
+  const ratePerMin = Number(miningRate) || 0;
 
   // Sync internal countdown with global session state
   useEffect(() => {
@@ -28,7 +28,7 @@ const MiningView: React.FC<Props> = ({ points, miningRate, session, onStartMinin
       const updateTimer = () => {
         const now = Date.now();
         const elapsed = Math.floor((now - session.startTime!) / 1000);
-        const remaining = Math.max(0, session.duration - elapsed);
+        const remaining = Math.max(0, (session.duration || 0) - elapsed);
         setTimeLeft(remaining);
       };
 
@@ -41,10 +41,8 @@ const MiningView: React.FC<Props> = ({ points, miningRate, session, onStartMinin
   }, [session.isActive, session.startTime, session.duration]);
 
   const handleStart = () => {
-    // Trigger the start logic in App.tsx
     onStartMining();
 
-    // Aesthetic particles launch
     for (let i = 0; i < 20; i++) {
       setTimeout(() => {
         const id = ++particleId.current;
@@ -63,18 +61,18 @@ const MiningView: React.FC<Props> = ({ points, miningRate, session, onStartMinin
     return `${h > 0 ? h + ':' : ''}${m < 10 && h > 0 ? '0' : ''}${m}:${s < 10 ? '0' : ''}${s}`;
   };
 
+  const sessionMinutes = Math.max(0, Math.round((session.duration || 0) / 60));
+
   return (
     <div className="flex flex-col items-center gap-6">
       {/* Visual Mining Machine Container */}
       <div className="relative w-full aspect-square max-w-[320px] flex items-center justify-center">
-        {/* Intense Cyber Background Glow */}
         <div
           className={`absolute inset-0 bg-purple-600/20 rounded-full blur-[80px] transition-all duration-1000 ${
             session.isActive ? 'opacity-100 scale-110 animate-pulse' : 'opacity-20 scale-90'
           }`}
         ></div>
 
-        {/* Energy Rings (Decor) */}
         {session.isActive && (
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
             <div className="w-[85%] h-[85%] border border-purple-500/20 rounded-full animate-spin-slow"></div>
@@ -85,14 +83,12 @@ const MiningView: React.FC<Props> = ({ points, miningRate, session, onStartMinin
           </div>
         )}
 
-        {/* Floating Particles */}
         {particles.map((p) => (
           <div key={p.id} className="coin-particle text-2xl z-30" style={{ left: `${p.left}%`, bottom: '45%' }}>
             💎
           </div>
         ))}
 
-        {/* The Main Machine Unit */}
         <div
           className={`relative z-10 p-8 glass rounded-[40px] border-purple-500/40 glow-purple flex flex-col items-center justify-center transition-all duration-700 overflow-hidden ${
             session.isActive
@@ -100,10 +96,8 @@ const MiningView: React.FC<Props> = ({ points, miningRate, session, onStartMinin
               : 'scale-100'
           }`}
         >
-          {/* Internal Scanner Effect when Active */}
           {session.isActive && <div className="scanner-line"></div>}
 
-          {/* Machine Status Indicators */}
           <div className="absolute top-4 left-0 right-0 px-6 flex justify-between items-center opacity-40">
             <Cpu size={14} className={session.isActive ? 'text-purple-400 animate-pulse' : 'text-gray-500'} />
             <Activity size={14} className={session.isActive ? 'text-blue-400 animate-bounce' : 'text-gray-500'} />
@@ -116,8 +110,6 @@ const MiningView: React.FC<Props> = ({ points, miningRate, session, onStartMinin
                 session.isActive ? 'text-purple-400' : 'text-gray-500'
               } drop-shadow-[0_0_20px_rgba(168,85,247,0.9)]`}
             />
-
-            {/* Energy Aura around the package */}
             {session.isActive && <div className="absolute inset-0 bg-purple-500/20 blur-xl rounded-full animate-pulse"></div>}
           </div>
 
@@ -130,7 +122,6 @@ const MiningView: React.FC<Props> = ({ points, miningRate, session, onStartMinin
             </p>
           </div>
 
-          {/* Machine Detail Overlay */}
           <div className="absolute bottom-2 left-0 right-0 flex justify-center gap-1 opacity-20">
             <div className={`h-1 w-8 rounded-full ${session.isActive ? 'bg-purple-500 animate-pulse' : 'bg-gray-600'}`}></div>
             <div
@@ -144,7 +135,6 @@ const MiningView: React.FC<Props> = ({ points, miningRate, session, onStartMinin
           </div>
         </div>
 
-        {/* Floating Decoration Icons */}
         <Pickaxe
           className={`absolute top-10 right-0 text-purple-400/40 transition-all duration-1000 ${
             session.isActive ? 'animate-spin-slow opacity-100 scale-125' : 'opacity-20 scale-100'
@@ -166,11 +156,11 @@ const MiningView: React.FC<Props> = ({ points, miningRate, session, onStartMinin
         >
           <p className="text-purple-400 text-[10px] font-bold uppercase tracking-widest flex items-center gap-1">
             <Cpu size={10} />
-            Hash Rate
+            Mining Rate
           </p>
           <div className="flex items-baseline gap-1 mt-1">
-            <p className="text-lg font-bold font-mono">{ratePerHour.toFixed(2)}</p>
-            <span className="text-[10px] opacity-40 uppercase">GP/HR</span>
+            <p className="text-lg font-bold font-mono">{ratePerMin.toFixed(2)}</p>
+            <span className="text-[10px] opacity-40 uppercase">GP/MIN</span>
           </div>
         </div>
 
@@ -191,7 +181,7 @@ const MiningView: React.FC<Props> = ({ points, miningRate, session, onStartMinin
         </div>
       </div>
 
-      {/* High-Attention Action Button */}
+      {/* Action Button */}
       <div className="w-full relative group">
         {!session.isActive && (
           <div className="absolute -inset-1 bg-gradient-to-r from-purple-600 via-blue-500 to-purple-600 rounded-2xl blur opacity-40 animate-pulse"></div>
@@ -228,8 +218,7 @@ const MiningView: React.FC<Props> = ({ points, miningRate, session, onStartMinin
       <div className="glass p-4 rounded-2xl border-white/5 w-full bg-white/[0.02] border-l-2 border-l-purple-500/50">
         <p className="text-[11px] text-white/50 text-center leading-relaxed italic">
           Each mining session runs for{' '}
-          <span className="text-purple-400 font-bold">{Math.round((session.duration || 0) / 60)} minutes</span>. Start a
-          session to earn GP.
+          <span className="text-purple-400 font-bold">{sessionMinutes} minutes</span>. Start a session to earn GP.
         </p>
       </div>
     </div>
